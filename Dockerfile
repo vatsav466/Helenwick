@@ -67,6 +67,7 @@ RUN pip install --upgrade pip setuptools wheel \
 
 # ── Copy backend source ────────────────────────────────────────────────────────
 COPY backend/api_manager             /opt/ceg/algo/api_manager
+COPY backend/api_manager/.alg_env    /opt/ceg/algo/api_manager/.alg_env
 COPY backend/authenticator           /opt/ceg/algo/authenticator
 COPY backend/orchestrator            /opt/ceg/algo/orchestrator
 COPY backend/utilities               /opt/ceg/algo/utilities
@@ -87,7 +88,7 @@ RUN rm -f /etc/nginx/sites-enabled/default
 COPY supervisord.conf /etc/supervisor/conf.d/novex.conf
 
 # ── Log directories ────────────────────────────────────────────────────────────
-RUN mkdir -p /var/log/ceg_sys_logs /var/log/ceg_logs
+RUN mkdir -p /var/log/ceg_sys_logs /var/log/ceg_logs /var/run/redis
 
 # ── Expose ports ───────────────────────────────────────────────────────────────
 # 5378 — nginx (frontend + API proxy)

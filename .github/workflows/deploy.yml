@@ -6,7 +6,7 @@
 # Steps:
 #   1. Build the Docker image (multi-stage: React + Python/nginx)
 #   2. Push to GitHub Container Registry (ghcr.io)
-#   3. SSH into 165.101.248.89, pull the new image, redeploy with rollback
+#   3. SSH into server, pull the new image, redeploy with rollback
 #   4. Health-check the live service (up to 150 s window)
 #   5. Auto-rollback to previous container on failure
 ##############################################################################
@@ -89,19 +89,19 @@ jobs:
             echo "════════════════════════════════════════════════"
             echo "  STEP 1/6 — Login to GHCR"
             echo "════════════════════════════════════════════════"
-            echo "$GH_PAT" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+            echo "$GH_PAT" | sudo docker login ghcr.io -u "$GH_ACTOR" --password-stdin
 
             echo "════════════════════════════════════════════════"
             echo "  STEP 2/6 — Pull new image"
             echo "════════════════════════════════════════════════"
-            docker pull "$IMAGE_TAG"
+            sudo docker pull "$IMAGE_TAG"
 
             echo "════════════════════════════════════════════════"
             echo "  STEP 3/6 — Rename current container (rollback anchor)"
             echo "════════════════════════════════════════════════"
-            if docker ps -a --format '{{.Names}}' | grep -q "^novex_app$"; then
-              docker rename novex_app novex_app_rollback || true
-              docker stop novex_app_rollback 2>/dev/null || true
+            if sudo docker ps -a --format '{{.Names}}' | grep -q "^novex_app$"; then
+              sudo docker rename novex_app novex_app_rollback || true
+              sudo docker stop novex_app_rollback 2>/dev/null || true
               echo "Previous container renamed to novex_app_rollback"
             else
               echo "No existing container found — fresh deploy"
@@ -110,7 +110,7 @@ jobs:
             echo "════════════════════════════════════════════════"
             echo "  STEP 4/6 — Start new container"
             echo "════════════════════════════════════════════════"
-            docker run -d \
+            sudo docker run -d \
               --name novex_app \
               --network host \
               --restart unless-stopped \
@@ -138,16 +138,16 @@ jobs:
             echo "════════════════════════════════════════════════"
             if [ "$SUCCESS" = "1" ]; then
               echo "✅ Deploy succeeded — removing rollback anchor"
-              docker rm -f novex_app_rollback 2>/dev/null || true
+              sudo docker rm -f novex_app_rollback 2>/dev/null || true
               # Clean up old dangling images to save disk space
-              docker image prune -f 2>/dev/null || true
+              sudo docker image prune -f 2>/dev/null || true
               echo "🎉 NOVEX is live at http://165.101.248.89:5378/"
             else
               echo "❌ Health check failed — rolling back!"
-              docker rm -f novex_app 2>/dev/null || true
-              if docker ps -a --format '{{.Names}}' | grep -q "^novex_app_rollback$"; then
-                docker rename novex_app_rollback novex_app
-                docker start novex_app
+              sudo docker rm -f novex_app 2>/dev/null || true
+              if sudo docker ps -a --format '{{.Names}}' | grep -q "^novex_app_rollback$"; then
+                sudo docker rename novex_app_rollback novex_app
+                sudo docker start novex_app
                 echo "⚠️  Rolled back to previous container"
               else
                 echo "⚠️  No rollback container available"

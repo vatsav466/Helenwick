@@ -1,149 +1,107 @@
-##############################################################################
-# NOVEX CI/CD Pipeline
-#
-# Triggers: push to main, or manual dispatch
-#
-# Steps:
-#   1. Build the Docker image (multi-stage: React + Python/nginx)
-#   2. Push to GitHub Container Registry (ghcr.io)
-#   3. SSH into server, pull the new image, redeploy with rollback
-#   4. Health-check the live service (up to 150 s window)
-#   5. Auto-rollback to previous container on failure
-##############################################################################
-
-name: "Build & Deploy NOVEX"
-
+name: Build and Deploy Application
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
-
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/novex
-  CONTAINER_NAME: novex_app
-
+  IMAGE_NAME: ${{ github.repository }}
 jobs:
-  build-and-deploy:
-    name: "Build → Push → Deploy"
+  build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
-      - name: "📥 Checkout source"
+      - name: Checkout
         uses: actions/checkout@v4
-
-      # ── 2. Docker Buildx ─────────────────────────────────────────────────────
-      - name: "🔧 Set up Docker Buildx"
+      - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
-
-      # ── 3. Login to GHCR ─────────────────────────────────────────────────────
-      - name: "🔐 Login to GitHub Container Registry"
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GH_PAT }}
-
-      # ── 4. Extract metadata (tags + labels) ──────────────────────────────────
-      - name: "🏷️  Docker metadata"
+      - name: Docker Metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ghcr.io/${{ github.repository }}
           tags: |
-            type=sha,prefix=sha-,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
-      # ── 5. Build & push ───────────────────────────────────────────────────────
-      - name: "🏗️  Build & push Docker image"
-        uses: docker/build-push-action@v5
+            type=raw,value=latest
+            type=sha,format=short
+      - name: Build and Push
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      # ── 6. Deploy to server ───────────────────────────────────────────────────
-      - name: "🚀 Deploy to production server"
+  deploy:
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          IMAGE_TAG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          GH_PAT: ${{ secrets.GH_PAT }}
-          GH_ACTOR: ${{ github.actor }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASS }}
-          envs: IMAGE_TAG,GH_PAT,GH_ACTOR
-          timeout: 180s
+          port: 22
           script: |
             set -e
-            echo "════════════════════════════════════════════════"
-            echo "  STEP 1/6 — Login to GHCR"
-            echo "════════════════════════════════════════════════"
-            echo "$GH_PAT" | sudo docker login ghcr.io -u "$GH_ACTOR" --password-stdin
-            echo "════════════════════════════════════════════════"
-            echo "  STEP 2/6 — Pull new image"
-            echo "════════════════════════════════════════════════"
-            sudo docker pull "$IMAGE_TAG"
-            echo "════════════════════════════════════════════════"
-            echo "  STEP 3/6 — Rename current container (rollback anchor)"
-            echo "════════════════════════════════════════════════"
-            if sudo docker ps -a --format '{{.Names}}' | grep -q "^novex_app$"; then
-              sudo docker rename novex_app novex_app_rollback || true
-              sudo docker stop novex_app_rollback 2>/dev/null || true
-              echo "Previous container renamed to novex_app_rollback"
-            else
-              echo "No existing container found — fresh deploy"
-            fi
-            echo "════════════════════════════════════════════════"
-            echo "  STEP 4/6 — Start new container"
-            echo "════════════════════════════════════════════════"
+            IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+            echo "${{ secrets.GH_PAT }}" | sudo docker login ghcr.io \
+              -u "${{ github.actor }}" \
+              --password-stdin
+            sudo docker pull ${IMAGE}:latest
+            sudo docker stop app-container || true
+            sudo docker rm app-container || true
+            sudo mkdir -p /opt/digitaltwin_images
             sudo docker run -d \
-              --name novex_app \
-              --network host \
+              --name app-container \
               --restart unless-stopped \
-              -e MODE=prod \
-              "$IMAGE_TAG"
-            echo "════════════════════════════════════════════════"
-            echo "  STEP 5/6 — Health check (30 probes × 5 s = 150 s)"
-            echo "════════════════════════════════════════════════"
-            SUCCESS=0
-            for i in $(seq 1 30); do
-              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-                --max-time 5 http://localhost:5378/health 2>/dev/null || true)
-              if [ "$HTTP_CODE" = "200" ]; then
-                echo "  ✅ Probe $i — HTTP 200 — Service is up!"
-                SUCCESS=1
+              -p 5378:5378 \
+              -v /opt/digitaltwin_images:/opt/digitaltwin_images \
+              ${IMAGE}:latest
+
+            echo "Waiting for application..."
+            for i in $(seq 1 15); do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5378/ || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "Frontend is up (HTTP $STATUS)"
                 break
               fi
-              echo "  ⏳ Probe $i — HTTP ${HTTP_CODE:-timeout} — Waiting…"
+              echo "Not ready yet (HTTP $STATUS), retrying ($i/15)..."
               sleep 5
-            done
-            echo "════════════════════════════════════════════════"
-            echo "  STEP 6/6 — Finalise"
-            echo "════════════════════════════════════════════════"
-            if [ "$SUCCESS" = "1" ]; then
-              echo "✅ Deploy succeeded — removing rollback anchor"
-              sudo docker rm -f novex_app_rollback 2>/dev/null || true
-              # Clean up old dangling images to save disk space
-              sudo docker image prune -f 2>/dev/null || true
-              echo "🎉 NOVEX is live at http://165.101.248.89:5378/"
-            else
-              echo "❌ Health check failed — rolling back!"
-              sudo docker rm -f novex_app 2>/dev/null || true
-              if sudo docker ps -a --format '{{.Names}}' | grep -q "^novex_app_rollback$"; then
-                sudo docker rename novex_app_rollback novex_app
-                sudo docker start novex_app
-                echo "⚠️  Rolled back to previous container"
-              else
-                echo "⚠️  No rollback container available"
+              if [ "$i" -eq 15 ]; then
+                echo "Frontend failed to start (last HTTP status: $STATUS)."
+                echo "--- Checking if frontend files exist in container ---"
+                sudo docker exec app-container ls -la /app/frontend/dist || echo "Path /app/frontend/dist not found in container"
+                echo "--- nginx config test ---"
+                sudo docker exec app-container nginx -t || true
+                echo "--- Full container logs ---"
+                sudo docker logs app-container
+                exit 1
               fi
+            done
+
+            echo "Checking Swagger..."
+            DOCS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5378/docs || echo "000")
+            if [ "$DOCS_STATUS" = "000" ]; then
+              echo "Swagger endpoint unreachable (connection failed)."
+              sudo docker logs app-container
               exit 1
+            else
+              echo "Swagger endpoint reachable (HTTP $DOCS_STATUS)"
             fi
+
+            sudo docker image prune -f

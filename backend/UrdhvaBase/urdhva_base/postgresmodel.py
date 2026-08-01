@@ -160,14 +160,22 @@ class BasePostgresModel(pydantic.BaseModel):
                             else:
                                 if key in or_condition_keys:
                                     # conditions = [f"{k}='{rpt[value][0]}'" for k in or_condition_keys[key]]
+                                    # BUG-FIX: nested f-strings reusing the same quote char (") inside
+                                    # another f-string are invalid on Python < 3.12 and raised
+                                    # "SyntaxError: f-string: unmatched '['" at import time. Building
+                                    # the quoted/joined value list as a plain variable first avoids
+                                    # nesting f-strings entirely and works on any Python version.
+                                    quoted_values = ', '.join("'" + str(v) + "'" for v in rpt[value])
                                     conditions = [
-                                            f"{k} IN ({', '.join([f"'{v}'" for v in rpt[value]])})"
+                                            f"{k} IN ({quoted_values})"
                                             for k in or_condition_keys[key]
-                                    ]                                    
+                                    ]
                                     where_clause.append(f"({' OR '.join(conditions)})")
                                 else:
                                     # where_clause.append(f"{key}='{rpt[value][0]}'")
-                                    where_clause.append(f"{key} IN ({', '.join([f"'{v}'" for v in rpt[value]])})")
+                                    # BUG-FIX: same nested f-string quote collision as above.
+                                    quoted_values = ', '.join("'" + str(v) + "'" for v in rpt[value])
+                                    where_clause.append(f"{key} IN ({quoted_values})")
                         else:
                             if formated:
                                 # where_clause.append({'key': key, "cond": ' ', "value": rpt[value]})
@@ -307,7 +315,6 @@ class BasePostgresModel(pydantic.BaseModel):
         finally:
             await asyncio.shield(session.close())
 
-    @classmethod
     @classmethod
     async def get_aggr_data(cls, query, limit=100, skip=0, skip_total=True):
         """

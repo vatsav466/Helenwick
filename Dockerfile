@@ -80,7 +80,7 @@ RUN rm -rf /usr/share/nginx/html/*
 COPY --from=frontend-build /app/dist /usr/share/nginx/html
 
 # ── nginx configuration ────────────────────────────────────────────────────────
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 # Remove the default nginx site config to avoid port conflicts
 RUN rm -f /etc/nginx/sites-enabled/default
 

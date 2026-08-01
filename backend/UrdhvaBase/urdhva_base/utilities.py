@@ -4,7 +4,6 @@ import asyncio
 import datetime
 import functools
 import threading
-import snakecase
 
 
 # Custom JSON serializer for datetime objects
@@ -61,14 +60,15 @@ def generate_unique_id(name, table_args):
 
 def snake_case(s):
     """
-    # Replace hyphens with spaces, then apply regular expression substitutions for title case conversion
-    # and add an underscore between words, finally convert the result to lowercase
+    Convert CamelCase / PascalCase / mixed strings to snake_case.
     :param s: string
     :return: converted snake case string
     Example:- snake_case("AlgoFusion")
               return:- algo_fusion
     """
-    return snakecase.convert(s)    
+    s = re.sub(r'(.)([A-Z][a-z]+)', r'\1_\2', str(s))
+    s = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', s)
+    return s.lower()
 
 
 def get_present_time(utc=False):
@@ -81,4 +81,3 @@ def get_present_time(utc=False):
     if not utc:
         time_stamp = time_stamp.astimezone(pytz.timezone('Asia/Kolkata'))
     return time_stamp
-

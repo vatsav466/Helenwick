@@ -38,11 +38,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libldap2-dev \
     libsasl2-dev \
     libssl-dev \
-    # Required by cx_Oracle / pyodbc
+    # Required by pyodbc
     unixodbc-dev \
     # Required by weasyprint (PDF generation)
     libpango-1.0-0 \
     libpangoft2-1.0-0 \
+    # C build toolchain (required by python-ldap, pyodbc, asyncpg, msgpack)
+    build-essential \
+    python3-dev \
     # General utilities
     curl \
     ca-certificates \

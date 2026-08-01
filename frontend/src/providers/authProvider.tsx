@@ -70,7 +70,7 @@ const findFirstAllowedPath = (
     return null;
   };
 
-  return dfs(originalMenu) || '/sodTerminal/terminalHome';
+  return dfs(originalMenu) || '/dnc/home/wall';
 };
 
 const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -104,7 +104,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     if (!initialAuthCheckComplete || isLoading) return;
 
     const isPublicRoute = PUBLIC_ROUTES.includes(location.pathname);
-    let homePath = '/sodTerminal/terminalHome'; // Default path
+    let homePath = '/dnc/home/wall'; // Default: NOVEX dashboard
 
     if (user?.allowedPages?.length > 0) {
       homePath = findFirstAllowedPath(menuData.menuItems as MenuItem[], user.allowedPages);

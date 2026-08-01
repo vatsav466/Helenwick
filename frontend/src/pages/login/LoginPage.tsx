@@ -30,9 +30,9 @@ function LoginPage() {
       // Get latest user state after login
       const currentUser = useAuthStore.getState().user;
       console.log("currentUser", currentUser);
-      // if (currentUser?.is_authenticated) {
-      //   navigate('/projects');
-      // }
+      if (currentUser?.is_authenticated) {
+        navigate('/dnc/home/wall');
+      }
     } catch (error) {
       console.error('Login error:', error);
     }

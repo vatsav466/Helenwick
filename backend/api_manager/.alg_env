@@ -1,0 +1,41 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# api_manager service environment configuration
+# Loaded by urdhva_base.settings (pydantic-settings reads .alg_env in CWD)
+# ──────────────────────────────────────────────────────────────────────────────
+
+app_name='NOVEX'
+
+# ── Database connections ───────────────────────────────────────────────────────
+# BUG-FIX: key was "ldb_urls" (typo) in old code — pydantic-settings never read
+# it, so the engine fell back to a default and the pool used None as the URL.
+db_urls={"postgres_async": ["postgresql+asyncpg://140.245.238.142:5432/hpcl_ceg?user=ceg_user&password=UUMrftkiJLPM50jD"], "redis": ["redis://localhost:6379"]}
+
+# ── Session / cookie ───────────────────────────────────────────────────────────
+cookie_name='ceg_session'
+session_httponly=True
+# session_secure must be False when running behind a plain-HTTP reverse proxy
+session_secure=False
+session_same_site='lax'
+
+# ── Fernet key for cookie encryption/decryption ───────────────────────────────
+# Generate a new one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+fernet_key='NjY5N2IwOWM5ZjE0MjMzN2M3YzA5Y2Y4ZDE4NTA2Mjk='
+
+# ── Payload encryption ─────────────────────────────────────────────────────────
+# Disable server-side payload encryption so the React frontend's plain-text
+# API calls are accepted without server-side decryption wrapping.
+enable_encrypted_payload=False
+
+# ── LDAP / AD settings ────────────────────────────────────────────────────────
+ldap_host='10.90.38.100'
+ldap_port=389
+ldap_domain='hpcl.in'
+ldap_auth_enabled=False
+
+# ── JWT (app mobile auth) ──────────────────────────────────────────────────────
+jwt_secret_key='novex-jwt-secret-change-in-production'
+jwt_algorithm='HS256'
+jwt_expiry_minutes=1440
+
+# ── Redis pool ────────────────────────────────────────────────────────────────
+max_redis_connections=20

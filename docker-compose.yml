@@ -1,0 +1,34 @@
+##############################################################################
+# docker-compose.yml — local development / testing
+#
+# Usage:
+#   docker compose up --build
+#
+# Then open:
+#   http://localhost:5378/     — NOVEX frontend
+#   http://localhost:5378/docs — Swagger UI (proxied through nginx)
+#   http://localhost:8002/docs — FastAPI direct
+##############################################################################
+
+version: "3.9"
+
+services:
+  novex:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: novex_dev
+    network_mode: host          # mirrors prod (DB is on external IP, same as server)
+    environment:
+      - MODE=prod
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5378/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    volumes:
+      # Mount the .alg_env at runtime so secrets are never baked into the image
+      # Override with your own copy: cp backend/api_manager/.alg_env .alg_env.local
+      - ./backend/api_manager/.alg_env:/opt/ceg/algo/api_manager/.alg_env:ro

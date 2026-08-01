@@ -1,12 +1,10 @@
 import axios from "axios";
 let count = 0;
 
-const config = {
-  apiKey: "localhost:5173",
-};
-
+// BUG-FIX: was hardcoded to "localhost:5173" — broken in production.
+// baseURL="" means requests go to the same origin, so nginx proxies /api correctly.
 const axiosHttp = axios.create({
-  baseURL: config.apiKey,
+  baseURL: "",
 });
 
 axiosHttp.interceptors.request.use(

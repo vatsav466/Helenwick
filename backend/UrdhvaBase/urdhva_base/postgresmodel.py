@@ -22,7 +22,6 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.pool import NullPool
 
 from sqlalchemy import (
     BigInteger,
@@ -65,8 +64,19 @@ class UrdhvaPostgresBase(Base):
 
 class DatabaseManager:
     def __init__(self, database_url):
-        self.engine = create_async_engine(database_url, poolclass=NullPool)
-        self.async_session = async_sessionmaker(self.engine)
+        # BUG-FIX: NullPool creates a new TCP connection per query → asyncio
+        # CancelledError / TimeoutError under any real load. Replaced with a
+        # real QueuePool with a 10-second asyncpg connect timeout and pre-ping.
+        self.engine = create_async_engine(
+            database_url,
+            pool_size=5,
+            max_overflow=10,
+            pool_timeout=20,
+            pool_recycle=300,
+            pool_pre_ping=True,
+            connect_args={'timeout': 10},
+        )
+        self.async_session = async_sessionmaker(self.engine, expire_on_commit=False)
 
     async def get_session(self):
         return self.async_session()
@@ -247,16 +257,41 @@ class BasePostgresModel(pydantic.BaseModel):
 
     @classmethod
     async def update_by_query(cls, query, entity_id=None):
-        session = await manager.get_session()
-        try:
-            result = await session.execute(text(query))
-            print(f"Rows committed {result.rowcount}")
-            await session.commit()
-        except Exception as e:
-            print(f"Exception while running update by query {e}")
-            raise f"Exception while running update by query {e}"
-        finally:
-            await asyncio.shield(session.close())
+        last_exc = None
+        for _attempt in range(2):  # retry once on transient DB failures
+            session = await manager.get_session()
+            try:
+                if limit:
+                    query_ = f"{query} LIMIT {limit} OFFSET {limit * skip}"
+                else:
+                    query_ = f"{query}"
+                if not query_.strip().upper().startswith("WITH ") and not query_.strip().upper().startswith("SELECT"):
+                    query_ = f"select {query_}"
+                result = await session.execute(text(query_))
+                resp = result.all()
+                # Getting key columns from results
+                columns = [key for key in result.keys()]
+                results = [{columns[index]: value for index, value in enumerate(row)} for row in resp]
+                # Fetching total available records for the given query
+                total = len(results)
+                if not skip_total:
+                    try:
+                        total = await session.scalar(text(f"select COUNT(*) FROM(SELECT {query}) AS subquery"))
+                    except:
+                        ...
+                results_data = {"data": results, "count": len(results), "total": total}
+                return results_data
+            except Exception as e:
+                last_exc = e
+                print(f"get_aggr_data attempt {_attempt + 1} failed: {e}")
+                if _attempt == 0:
+                    await asyncio.sleep(0.5)
+            finally:
+                try:
+                    await asyncio.shield(session.close())
+                except Exception:
+                    pass
+        raise Exception(f"Exception while running aggregation query {last_exc}") from last_exc
 
     @classmethod
     async def execute_query(cls, query):
@@ -273,6 +308,7 @@ class BasePostgresModel(pydantic.BaseModel):
             await asyncio.shield(session.close())
 
     @classmethod
+    @classmethod
     async def get_aggr_data(cls, query, limit=100, skip=0, skip_total=True):
         """
         @Description: For getting aggregated data, Join queries
@@ -281,39 +317,41 @@ class BasePostgresModel(pydantic.BaseModel):
         :param skip:
         :return:
         """
-        # if not limit:
-        #     limit = 100
-        # if not skip:
-        #     skip = 0
-        # Generating Postgres query from given query
-        session = await manager.get_session()
-        try:
-            if limit:
-                query_ = f"{query} LIMIT {limit} OFFSET {limit * skip}"
-            else:
-                query_ = f"{query}"
-            if not query_.strip().upper().startswith("WITH ") and not query_.strip().upper().startswith("SELECT"):
-                query_ = f"select {query_}"
-            result = await session.execute(text(query_))
-            resp = result.all()
-            # Getting key columns from reults
-            columns = [key for key in result.keys()]
-            results = [{columns[index]: value for index, value in enumerate(row)} for row in resp]
-            # Fetching total available records for the given query
-            total = len(results)
-            if not skip_total:
+        last_exc = None
+        for _attempt in range(2):  # retry once on transient DB failures
+            session = await manager.get_session()
+            try:
+                if limit:
+                    query_ = f"{query} LIMIT {limit} OFFSET {limit * skip}"
+                else:
+                    query_ = f"{query}"
+                if not query_.strip().upper().startswith("WITH ") and not query_.strip().upper().startswith("SELECT"):
+                    query_ = f"select {query_}"
+                result = await session.execute(text(query_))
+                resp = result.all()
+                # Getting key columns from results
+                columns = [key for key in result.keys()]
+                results = [{columns[index]: value for index, value in enumerate(row)} for row in resp]
+                # Fetching total available records for the given query
+                total = len(results)
+                if not skip_total:
+                    try:
+                        total = await session.scalar(text(f"select COUNT(*) FROM(SELECT {query}) AS subquery"))
+                    except Exception:
+                        pass
+                results_data = {"data": results, "count": len(results), "total": total}
+                return results_data
+            except Exception as e:
+                last_exc = e
+                print(f"get_aggr_data attempt {_attempt + 1} failed: {e}")
+                if _attempt == 0:
+                    await asyncio.sleep(0.5)
+            finally:
                 try:
-                    total = await session.scalar(text(f"select COUNT(*) FROM(SELECT {query}) AS subquery"))
-                except:
-                    ...
-            results_data = {"data": results, "count": len(results), "total": total}
-            return results_data
-        except Exception as e:
-            print(f"Exception while running aggregation query {e}")
-            raise f"Exception while running aggregation query {e}"
-        finally:
-            await asyncio.shield(session.close())
-
+                    await asyncio.shield(session.close())
+                except Exception:
+                    pass
+        raise Exception(f"Exception while running aggregation query {last_exc}") from last_exc
 
     @classmethod
     async def create_database_table(cls):

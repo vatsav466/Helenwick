@@ -27,7 +27,7 @@ async def parse_device_info(user_agent) -> str:
 @router.post('/fetch_users', tags=['Users'])
 async def users_fetch_users(data: Users_Fetch_UsersParams):
     params = queryparams.QueryParams(search_text=data.search_string, limit=data.limit, skip=data.skip)
-    # return await Users.
+    return await Users.get_all(params)
 
 
 # Action create_user

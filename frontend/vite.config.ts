@@ -38,12 +38,11 @@ export default defineConfig({
       plugins: [tailwindcss()],
     },
   },
-  server: { 
+  server: {
     port: 3000,
-    hmr: {  
-      host: 'localhost',
-      protocol: 'ws',
-    },
+    host: true,
+    allowedHosts: true,
+    hmr: true,
   },
   build: {
     //chunk loading for production

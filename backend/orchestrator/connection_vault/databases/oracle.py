@@ -3,7 +3,7 @@ import sys
 import json
 import base64
 import typing
-import cx_Oracle
+import oracledb
 import traceback
 import pandas as pd
 import polars as pl
@@ -78,10 +78,10 @@ class Oracle(BaseAction):
             self.params['dns'] += f"/{self.params['service_name']}"
         elif self.params.get('database_name', ''):
             self.params['dns'] += f"/{self.params['database_name']}"
-        connection = cx_Oracle.connect(
-            self.params["user_name"],
-            self.params["password"],
-            self.params["dns"]
+        connection = oracledb.connect(
+            user=self.params["user_name"],
+            password=self.params["password"],
+            dsn=self.params["dns"]
         )
         return connection
 
@@ -103,7 +103,7 @@ class Oracle(BaseAction):
                 "status": True, "message": "Connected to Oracle",
                 "data": []
             }
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {
@@ -130,7 +130,7 @@ class Oracle(BaseAction):
                 "status": True, "message": "Success",
                 "data": df['USERNAME'].unique().tolist()
             }
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {
@@ -156,7 +156,7 @@ class Oracle(BaseAction):
                 "status": True, "message": "Success",
                 "data": df['TABLE_NAME'].unique().tolist()
             }
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {
@@ -184,7 +184,7 @@ class Oracle(BaseAction):
                 "status": True, "message": "Success",
                 "data": df['COLUMN_NAME'].unique().tolist()
             }
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {
@@ -210,7 +210,7 @@ class Oracle(BaseAction):
                 "status": True, "message": "Success",
                 "data": df['COLUMN_NAME'].unique().tolist()
             }
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {
@@ -240,7 +240,7 @@ class Oracle(BaseAction):
                 connection.commit()
             # cursor.close()
             await self.close_connection(connection)
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
 
@@ -283,7 +283,7 @@ class Oracle(BaseAction):
             connection.commit()
             # cursor.close()
             await self.close_connection(connection)
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
 
@@ -307,7 +307,7 @@ class Oracle(BaseAction):
             connection.commit()
             # cursor.close()
             await self.close_connection(connection)
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
 
@@ -355,7 +355,7 @@ class Oracle(BaseAction):
                     "status": True, "message": "Success", "data": final_df.to_dict(orient='records')
                 }
             return pl.from_pandas(final_df)
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {
@@ -395,7 +395,7 @@ class Oracle(BaseAction):
                 "status": True, "message": "Success",
                 "data": columns_mapping
             }
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {
@@ -420,7 +420,7 @@ class Oracle(BaseAction):
             records = pd.DataFrame(records)
             await self.close_connection(connection)
             return records.to_dict(orient='records')
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             raise err

@@ -3,7 +3,7 @@ import json
 import datetime
 import typing
 import asyncio
-import cx_Oracle
+import oracledb
 import traceback
 import pandas as pd
 import polars as pl
@@ -134,12 +134,10 @@ class Oracle(BaseAction):
         elif self.params.get('database_name', ''):
             self.params['dns'] += f"/{self.params['database_name']}"
 
-        self._connection = cx_Oracle.connect(
-            self.params["user_name"],
-            self.params["password"],
-            self.params["dns"],
-            encoding="UTF-8",
-            nencoding="UTF-8"
+        self._connection = oracledb.connect(
+            user=self.params["user_name"],
+            password=self.params["password"],
+            dsn=self.params["dns"]
         )
         print(f"Oracle connection opened -> {self.params['dns']}")
         return self._connection
@@ -172,7 +170,7 @@ class Oracle(BaseAction):
             connection = await self.get_connection()
             await self.close_connection(connection)
             return {"status": True, "message": "Connected to Oracle", "data": []}
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {"status": False, "message": "Unable to connect to Oracle", "data": []}
@@ -189,7 +187,7 @@ class Oracle(BaseAction):
             print(df['USERNAME'].unique().tolist())
             df.to_csv("schema-list.csv", index=False)
             return {"status": True, "message": "Success", "data": df['USERNAME'].unique().tolist()}
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {"status": False, "message": f"Not able to connect {err}", "data": None}
@@ -206,7 +204,7 @@ class Oracle(BaseAction):
             print(df['TABLE_NAME'].unique().tolist())
             df.to_csv("tables_list.csv", index=False)
             return {"status": True, "message": "Success", "data": df['TABLE_NAME'].unique().tolist()}
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {"status": False, "message": f"Not able to connect {err}", "data": None}
@@ -223,7 +221,7 @@ class Oracle(BaseAction):
             df = pd.DataFrame({column: [row[i] for row in row] for i, column in enumerate(column_names)})
             await self.close_connection(connection)
             return {"status": True, "message": "Success", "data": df['COLUMN_NAME'].unique().tolist()}
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {"status": False, "message": f"Not able to connect {err}", "data": None}
@@ -238,7 +236,7 @@ class Oracle(BaseAction):
             df = pd.DataFrame({column: [row[i] for row in row] for i, column in enumerate(column_names)})
             await self.close_connection(connection)
             return {"status": True, "message": "Success", "data": df['COLUMN_NAME'].unique().tolist()}
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {"status": False, "message": f"Not able to connect {err}", "data": None}
@@ -257,7 +255,7 @@ class Oracle(BaseAction):
                 cursor.execute(table_create_sql)
                 connection.commit()
             await self.close_connection(connection)
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
 
@@ -291,7 +289,7 @@ class Oracle(BaseAction):
             cursor.execute(sql)
             connection.commit()
             await self.close_connection(connection)
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
 
@@ -306,7 +304,7 @@ class Oracle(BaseAction):
             cursor.executemany(query, records.to_dicts())
             connection.commit()
             await self.close_connection(connection)
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
 
@@ -343,7 +341,7 @@ class Oracle(BaseAction):
                 final_df.to_csv(f"{table_name}.csv", mode='a', index=False, header=False, encoding='utf-8-sig')
 
             return pl.from_pandas(final_df)
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(f"Oracle Error for table {table_name}: {err}")
             traceback.print_exc(file=sys.stdout)
             return {"status": False, "message": f"Not able to fetch data {err}", "data": []}
@@ -370,7 +368,7 @@ class Oracle(BaseAction):
                 columns_mapping[column] = df[column].unique().tolist()
             await self.close_connection(connection)
             return {"status": True, "message": "Success", "data": columns_mapping}
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             return {"status": False, "message": f"Not able to fetch data {err}", "data": []}
@@ -386,7 +384,7 @@ class Oracle(BaseAction):
             records = pd.DataFrame(records)
             await self.close_connection(connection)
             return records.to_dict(orient='records')
-        except cx_Oracle.Error as err:
+        except oracledb.Error as err:
             print(err)
             traceback.print_exc(file=sys.stdout)
             raise err

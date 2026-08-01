@@ -6,24 +6,25 @@
 app_name='NOVEX'
 
 # ── Database connections ───────────────────────────────────────────────────────
-# BUG-FIX: key was "ldb_urls" (typo) in old code — pydantic-settings never read
-# it, so the engine fell back to a default and the pool used None as the URL.
-db_urls={"postgres_async": ["postgresql+asyncpg://140.245.238.142:5432/hpcl_ceg?user=ceg_user&password=UUMrftkiJLPM50jD"], "redis": ["redis://localhost:6379"]}
+db_urls={"postgres_async": ["postgresql+asyncpg://13.126.249.159:5432/hpcl_ceg?user=novex&password=UUDrftkiJLPM59jD"], "redis": ["redis://localhost:6379"]}
+
+# ── Import paths (Docker container paths) ─────────────────────────────────────
+import_paths={"base_path": "/opt/ceg/algo/", "api_manager": "/opt/ceg/algo/api_manager", "orchestrator": "/opt/ceg/algo/orchestrator"}
+
+# ── DB connection type mapping ─────────────────────────────────────────────────
+db_connection_mapping={"2": {"cred_model": "Databases", "cred_type": "PostgreSQL"}, "3": {"cred_model": "Databases", "cred_type": "Oracle"}, "1": {"cred_model": "Databases", "cred_type": "PostgreSQL"}}
 
 # ── Session / cookie ───────────────────────────────────────────────────────────
 cookie_name='ceg_session'
 session_httponly=True
-# session_secure must be False when running behind a plain-HTTP reverse proxy
 session_secure=False
 session_same_site='lax'
 
 # ── Fernet key for cookie encryption/decryption ───────────────────────────────
-# Generate a new one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 fernet_key='NjY5N2IwOWM5ZjE0MjMzN2M3YzA5Y2Y4ZDE4NTA2Mjk='
 
 # ── Payload encryption ─────────────────────────────────────────────────────────
-# Disable server-side payload encryption so the React frontend's plain-text
-# API calls are accepted without server-side decryption wrapping.
+encryption_key='mcMAmuM2wLgNey7hgaCXDsaH__h13R2esSQ7fKvX3ak='
 enable_encrypted_payload=False
 
 # ── LDAP / AD settings ────────────────────────────────────────────────────────
@@ -39,3 +40,33 @@ jwt_expiry_minutes=1440
 
 # ── Redis pool ────────────────────────────────────────────────────────────────
 max_redis_connections=20
+
+# ── Camunda workflow engine ────────────────────────────────────────────────────
+camunda_url='http://13.126.249.159:8082'
+
+# ── Notification templates (Docker container path) ────────────────────────────
+template_path='/opt/ceg/algo/orchestrator/notification_templates'
+
+# ── SMTP (email notifications) ────────────────────────────────────────────────
+smtp_host='smtp.gmail.com'
+smtp_port=587
+smtp_from_url='yesu.p@algofusiontech.com'
+smtp_username='yesu.p@algofusiontech.com'
+smtp_password='zxyvqesfcwekpqsz'
+smtp_tls_enabled=True
+smtp_ssl_enabled=False
+
+# ── MinIO object storage ───────────────────────────────────────────────────────
+minio_endpoint='http://13.126.249.159:9006'
+minio_access_key='minioadmin'
+minio_secret_key='minioadmin'
+minio_bucket='reports'
+minio_secure=False
+
+# ── ThingsBoard (digital twin) ─────────────────────────────────────────────────
+things_board_url='https://digital-twin.algofusiontech.com'
+things_board_username='admin@algofusiontech.com'
+things_board_password='Alg0Sc@daDash#70'
+
+# ── AOT status API ─────────────────────────────────────────────────────────────
+aot_status_url='http://10.90.37.178:8007/Status/api/hpcl/status'

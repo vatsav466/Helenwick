@@ -88,6 +88,17 @@ jobs:
           fi
           echo "All required secrets are present."
 
+      - name: Validate GH_PAT has package scopes
+        run: |
+          SCOPES=$(curl -sI -H "Authorization: token ${{ secrets.GH_PAT }}" https://api.github.com/user | grep -i '^x-oauth-scopes:' || true)
+          echo "Token scopes: ${SCOPES:-<none found — token invalid, expired, or fine-grained>}"
+          if ! echo "$SCOPES" | grep -q "write:packages"; then
+            echo "::error::GH_PAT is missing write:packages scope (or is invalid/expired/fine-grained)."
+            echo "::error::Regenerate a CLASSIC PAT with write:packages + read:packages scopes and update the GH_PAT secret."
+            exit 1
+          fi
+          echo "✅ GH_PAT has required package scopes."
+
       - name: Deploy to server via SSH
         env:
           # Forwarded into the remote script's environment via `envs:` below.
@@ -121,15 +132,27 @@ jobs:
             # ── Normalise image name (GHCR requires lowercase) ──────────────
             IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
+            # ── Diagnose PAT scopes before attempting login ─────────────────
+            echo "Checking GH_PAT scopes..."
+            SCOPES=$(curl -sI -H "Authorization: token ${{ secrets.GH_PAT }}" https://api.github.com/user | grep -i "x-oauth-scopes" || echo "no x-oauth-scopes header found")
+            echo "Token scopes: ${SCOPES}"
+            if ! echo "$SCOPES" | grep -qi "packages"; then
+              echo "❌ Token has no packages scope (or is invalid/expired)."
+              echo "   Regenerate a CLASSIC PAT at github.com/settings/tokens with"
+              echo "   write:packages + read:packages + repo checked, then update"
+              echo "   the GH_PAT secret. Fine-grained tokens are unreliable for GHCR."
+              exit 1
+            fi
+
             # ── Authenticate and pull latest image ──────────────────────────
             if ! echo "${{ secrets.GH_PAT }}" | run_sudo docker login ghcr.io \
               -u "${{ github.actor }}" \
               --password-stdin; then
-              echo "❌ GHCR login failed (denied: denied)."
-              echo "   This means the GH_PAT secret is missing, expired, or lacks"
-              echo "   read:packages/write:packages scope — NOT an nginx or app issue."
-              echo "   Fix: regenerate a classic PAT with write:packages + read:packages"
-              echo "   scopes, update the GH_PAT secret, and re-run this workflow."
+              echo "❌ GHCR login failed (denied: denied) despite token having packages scope."
+              echo "   Likely causes: package-level access restriction on the"
+              echo "   'helenwick' package (check github.com/${{ github.actor }}?tab=packages"
+              echo "   → helenwick → Package settings → Manage Actions access),"
+              echo "   or the token belongs to a different account than the image owner."
               exit 1
             fi
 

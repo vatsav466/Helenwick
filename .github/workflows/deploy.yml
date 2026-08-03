@@ -1,33 +1,41 @@
-name: Build and Deploy Application
+name: Build and Deploy NOVEX
+
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 1 — Build Docker image and push to GitHub Container Registry
+# ─────────────────────────────────────────────────────────────────────────────
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Set up Buildx
+
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Login to GHCR
+
+      - name: Log in to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GH_PAT }}
-      - name: Docker Metadata
+
+      - name: Extract Docker metadata (tags + labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -35,7 +43,8 @@ jobs:
           tags: |
             type=raw,value=latest
             type=sha,format=short
-      - name: Build and Push
+
+      - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -44,12 +53,18 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 2 — SSH into the server and deploy the new image
+# Runs only on pushes to main (not on PRs).
+# ─────────────────────────────────────────────────────────────────────────────
   deploy:
     needs: build-and-push
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
+
     steps:
-      - name: Deploy
+      - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -58,50 +73,98 @@ jobs:
           port: 22
           script: |
             set -e
+
+            # ── Normalise image name (GHCR requires lowercase) ──────────────
             IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+
+            # ── Authenticate and pull latest image ──────────────────────────
             echo "${{ secrets.GH_PAT }}" | sudo docker login ghcr.io \
               -u "${{ github.actor }}" \
               --password-stdin
+
             sudo docker pull ${IMAGE}:latest
-            sudo docker stop app-container || true
-            sudo docker rm app-container || true
+
+            # ── Stop and remove the old container (ignore errors if absent) ─
+            sudo docker stop novex-app || true
+            sudo docker rm   novex-app || true
+
+            # ── Create required host directories ────────────────────────────
             sudo mkdir -p /opt/digitaltwin_images
+            sudo mkdir -p /opt/novex
+
+            # ── Ensure the .alg_env secrets file exists on the host ─────────
+            # Place your credentials at /opt/novex/.alg_env on the server once:
+            #   sudo nano /opt/novex/.alg_env   (then paste DB/Redis/LDAP creds)
+            #   sudo chmod 600 /opt/novex/.alg_env
+            ALG_ENV_PATH="/opt/novex/.alg_env"
+            if [ ! -f "${ALG_ENV_PATH}" ]; then
+              echo "ERROR: ${ALG_ENV_PATH} not found on server."
+              echo "Create it with your DB/Redis/LDAP credentials before deploying:"
+              echo "  sudo nano /opt/novex/.alg_env"
+              echo "  sudo chmod 600 /opt/novex/.alg_env"
+              exit 1
+            fi
+
+            # ── Launch container ─────────────────────────────────────────────
+            # FIX 1: publish BOTH ports
+            #   5378 — nginx  (frontend + proxied /api and /docs)
+            #   8002 — FastAPI direct (/docs, /redoc, /openapi.json)
+            # FIX 2: mount .alg_env so the backend can read its credentials
             sudo docker run -d \
-              --name app-container \
+              --name novex-app \
               --restart unless-stopped \
               -p 5378:5378 \
+              -p 8002:8002 \
+              -v "${ALG_ENV_PATH}:/opt/ceg/algo/api_manager/.alg_env:ro" \
               -v /opt/digitaltwin_images:/opt/digitaltwin_images \
               ${IMAGE}:latest
 
-            echo "Waiting for application..."
+            # ── Wait for nginx / frontend to become healthy ──────────────────
+            echo "Waiting for application to start (up to 75 s)..."
             for i in $(seq 1 15); do
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5378/ || echo "000")
               if [ "$STATUS" = "200" ]; then
-                echo "Frontend is up (HTTP $STATUS)"
+                echo "✅ Frontend is up (HTTP $STATUS)"
                 break
               fi
-              echo "Not ready yet (HTTP $STATUS), retrying ($i/15)..."
+              echo "   Not ready yet (HTTP $STATUS) — attempt $i/15..."
               sleep 5
               if [ "$i" -eq 15 ]; then
-                echo "Frontend failed to start (last HTTP status: $STATUS)."
-                echo "--- Checking if frontend files exist in container ---"
-                sudo docker exec app-container ls -la /app/frontend/dist || echo "Path /app/frontend/dist not found in container"
-                echo "--- nginx config test ---"
-                sudo docker exec app-container nginx -t || true
-                echo "--- Full container logs ---"
-                sudo docker logs app-container
+                echo "❌ Frontend did not start within 75 s."
+                echo "--- nginx config inside container ---"
+                sudo docker exec novex-app nginx -t || true
+                echo "--- Container logs (last 100 lines) ---"
+                sudo docker logs --tail 100 novex-app
                 exit 1
               fi
             done
 
-            echo "Checking Swagger..."
-            DOCS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5378/docs || echo "000")
-            if [ "$DOCS_STATUS" = "000" ]; then
-              echo "Swagger endpoint unreachable (connection failed)."
-              sudo docker logs app-container
+            # ── Verify /docs on port 5378 (via nginx proxy) ─────────────────
+            DOCS_5378=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5378/docs || echo "000")
+            echo "http://localhost:5378/docs  → HTTP ${DOCS_5378}"
+            if [ "${DOCS_5378}" = "000" ]; then
+              echo "❌ /docs unreachable on port 5378"
+              sudo docker logs --tail 50 novex-app
               exit 1
-            else
-              echo "Swagger endpoint reachable (HTTP $DOCS_STATUS)"
             fi
 
+            # ── Verify /docs on port 8002 (FastAPI direct) ──────────────────
+            DOCS_8002=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8002/docs || echo "000")
+            echo "http://localhost:8002/docs  → HTTP ${DOCS_8002}"
+            if [ "${DOCS_8002}" = "000" ]; then
+              echo "❌ FastAPI not reachable on port 8002 — check supervisord logs"
+              sudo docker exec novex-app cat /var/log/api.log | tail -50 || true
+              sudo docker logs --tail 50 novex-app
+              exit 1
+            fi
+
+            echo ""
+            echo "════════════════════════════════════════════════════"
+            echo "✅  Deploy complete"
+            echo "   Dashboard : http://${{ secrets.SERVER_HOST }}:5378/"
+            echo "   Swagger   : http://${{ secrets.SERVER_HOST }}:5378/docs"
+            echo "   FastAPI   : http://${{ secrets.SERVER_HOST }}:8002/docs"
+            echo "════════════════════════════════════════════════════"
+
+            # ── Prune dangling images to reclaim disk space ──────────────────
             sudo docker image prune -f

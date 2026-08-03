@@ -90,37 +90,23 @@ jobs:
 
             # ── Create required host directories ────────────────────────────
             sudo mkdir -p /opt/digitaltwin_images
-            sudo mkdir -p /opt/novex
-
-            # ── Ensure the .alg_env secrets file exists on the host ─────────
-            # Place your credentials at /opt/novex/.alg_env on the server once:
-            #   sudo nano /opt/novex/.alg_env   (then paste DB/Redis/LDAP creds)
-            #   sudo chmod 600 /opt/novex/.alg_env
-            ALG_ENV_PATH="/opt/novex/.alg_env"
-            if [ ! -f "${ALG_ENV_PATH}" ]; then
-              echo "ERROR: ${ALG_ENV_PATH} not found on server."
-              echo "Create it with your DB/Redis/LDAP credentials before deploying:"
-              echo "  sudo nano /opt/novex/.alg_env"
-              echo "  sudo chmod 600 /opt/novex/.alg_env"
-              exit 1
-            fi
 
             # ── Launch container ─────────────────────────────────────────────
-            # FIX 1: publish BOTH ports
-            #   5378 — nginx  (frontend + proxied /api and /docs)
+            # NOTE: .alg_env is already baked into the image by the Dockerfile
+            #       (COPY backend/api_manager/.alg_env ...) so no host mount is
+            #       needed. Both ports are published:
+            #   5378 — nginx (frontend + proxied /api and /docs)
             #   8002 — FastAPI direct (/docs, /redoc, /openapi.json)
-            # FIX 2: mount .alg_env so the backend can read its credentials
             sudo docker run -d \
               --name novex-app \
               --restart unless-stopped \
               -p 5378:5378 \
               -p 8002:8002 \
-              -v "${ALG_ENV_PATH}:/opt/ceg/algo/api_manager/.alg_env:ro" \
               -v /opt/digitaltwin_images:/opt/digitaltwin_images \
               ${IMAGE}:latest
 
-            # ── Wait for nginx / frontend to become healthy ──────────────────
-            echo "Waiting for application to start (up to 75 s)..."
+            # ── Wait for nginx / frontend to become healthy (up to 75 s) ────
+            echo "Waiting for application to start..."
             for i in $(seq 1 15); do
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5378/ || echo "000")
               if [ "$STATUS" = "200" ]; then

@@ -92,34 +92,39 @@ jobs:
             sudo mkdir -p /opt/digitaltwin_images
 
             # ── Launch container ─────────────────────────────────────────────
-            # NOTE: .alg_env is already baked into the image by the Dockerfile
-            #       (COPY backend/api_manager/.alg_env ...) so no host mount is
-            #       needed. Both ports are published:
-            #   5378 — nginx (frontend + proxied /api and /docs)
-            #   8002 — FastAPI direct (/docs, /redoc, /openapi.json)
+            # --network host is REQUIRED: the .alg_env connection strings use
+            # "localhost" to reach PostgreSQL, Redis, and other services that
+            # run directly on this server. Without host networking those
+            # connections fail and the FastAPI process crashes immediately.
+            #
+            # With host networking the container shares the host network stack,
+            # so "localhost" inside the container == the server's localhost.
+            # Ports 5378 (nginx) and 8002 (FastAPI) are bound on the host
+            # directly — no -p mappings needed or allowed in host mode.
             sudo docker run -d \
               --name novex-app \
               --restart unless-stopped \
-              -p 5378:5378 \
-              -p 8002:8002 \
+              --network host \
               -v /opt/digitaltwin_images:/opt/digitaltwin_images \
               ${IMAGE}:latest
 
-            # ── Wait for nginx / frontend to become healthy (up to 75 s) ────
+            # ── Wait for nginx / frontend to become healthy (up to 90 s) ────
             echo "Waiting for application to start..."
-            for i in $(seq 1 15); do
+            for i in $(seq 1 18); do
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5378/ || echo "000")
               if [ "$STATUS" = "200" ]; then
                 echo "✅ Frontend is up (HTTP $STATUS)"
                 break
               fi
-              echo "   Not ready yet (HTTP $STATUS) — attempt $i/15..."
+              echo "   Not ready yet (HTTP $STATUS) — attempt $i/18..."
               sleep 5
-              if [ "$i" -eq 15 ]; then
-                echo "❌ Frontend did not start within 75 s."
+              if [ "$i" -eq 18 ]; then
+                echo "❌ Frontend did not start within 90 s."
                 echo "--- nginx config inside container ---"
                 sudo docker exec novex-app nginx -t || true
-                echo "--- Container logs (last 100 lines) ---"
+                echo "--- API process logs ---"
+                sudo docker exec novex-app cat /var/log/api.log 2>/dev/null | tail -50 || true
+                echo "--- Full container logs ---"
                 sudo docker logs --tail 100 novex-app
                 exit 1
               fi
@@ -138,8 +143,8 @@ jobs:
             DOCS_8002=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8002/docs || echo "000")
             echo "http://localhost:8002/docs  → HTTP ${DOCS_8002}"
             if [ "${DOCS_8002}" = "000" ]; then
-              echo "❌ FastAPI not reachable on port 8002 — check supervisord logs"
-              sudo docker exec novex-app cat /var/log/api.log | tail -50 || true
+              echo "❌ FastAPI not reachable on port 8002"
+              sudo docker exec novex-app cat /var/log/api.log 2>/dev/null | tail -50 || true
               sudo docker logs --tail 50 novex-app
               exit 1
             fi

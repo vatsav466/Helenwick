@@ -143,7 +143,7 @@ class BaseMongoModel(pydantic.BaseModel):
         json_encoders = {
             bson.ObjectId: str
         }
-        collection_name: None
+        collection_name: str = ""
 
 
 class MongoModel(BaseMongoModel):

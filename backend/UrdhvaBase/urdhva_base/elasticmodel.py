@@ -604,7 +604,7 @@ class BaseElasticModel(pydantic.BaseModel):
         allow_population_by_field_name = True
         json_encoders = {
         }
-        collection_name: None
+        collection_name: str = ""
 
 
 class ElasticModel(BaseElasticModel):

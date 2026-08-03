@@ -78,6 +78,27 @@ class Settings(BaseSettings):
     # ── Rate limiting ─────────────────────────────────────────────────────────
     rate_limit_per_minute: int = 1000
 
+    # ── Logging ───────────────────────────────────────────────────────────────
+    # Logger.getInstance() is called at module import time in elasticmodel.py,
+    # so these MUST have defaults or the entire urdhva_base package fails to import.
+    log_base_dir: str = "/var/log/ceg_sys_logs"
+    log_max_size: int = 10 * 1024 * 1024   # 10 MB per log file
+    log_max_count: int = 5                  # keep 5 rotated backup files
+
+    # ── Elasticsearch / MongoDB index naming ──────────────────────────────────
+    # Used as the base index/db name when constructing per-entity index names.
+    default_index: str = "novex"
+
+    # ── Audit logging ─────────────────────────────────────────────────────────
+    auditlog_enabled: bool = False
+    auditlog_queue_name: str = "auditlog"
+
+    # ── Secret / password encryption ──────────────────────────────────────────
+    password_salt: str = "urdhva_base_secret"
+
+    # ── Master data in-memory cache ───────────────────────────────────────────
+    default_masters_cache_seconds: int = 300   # 5 minutes
+
     # ── Misc ──────────────────────────────────────────────────────────────────
     debug: bool = False
     log_level: str = "info"

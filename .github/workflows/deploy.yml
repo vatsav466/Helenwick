@@ -122,9 +122,16 @@ jobs:
             IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
             # ── Authenticate and pull latest image ──────────────────────────
-            echo "${{ secrets.GH_PAT }}" | run_sudo docker login ghcr.io \
+            if ! echo "${{ secrets.GH_PAT }}" | run_sudo docker login ghcr.io \
               -u "${{ github.actor }}" \
-              --password-stdin
+              --password-stdin; then
+              echo "❌ GHCR login failed (denied: denied)."
+              echo "   This means the GH_PAT secret is missing, expired, or lacks"
+              echo "   read:packages/write:packages scope — NOT an nginx or app issue."
+              echo "   Fix: regenerate a classic PAT with write:packages + read:packages"
+              echo "   scopes, update the GH_PAT secret, and re-run this workflow."
+              exit 1
+            fi
 
             run_sudo docker pull ${IMAGE}:latest
 

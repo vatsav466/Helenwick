@@ -35,11 +35,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GH_PAT }}
 
+      # Docker image names must be all lowercase — GitHub repo names can have
+      # capital letters, so normalise once and reuse below.
+      - name: Set lowercase image name
+        run: echo "IMAGE_NAME_LOWER=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       - name: Extract Docker metadata (tags + labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}
           tags: |
             type=raw,value=latest
             type=sha,format=short
@@ -64,44 +69,81 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Repeat lowercasing here — env vars set via GITHUB_ENV in job 1
+      # do not carry over to job 2, they're separate runners.
+      - name: Set lowercase image name
+        run: echo "IMAGE_NAME_LOWER=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Verify required secrets are set
+        run: |
+          missing=0
+          [ -z "${{ secrets.SERVER_HOST }}" ] && echo "::error::SERVER_HOST secret is missing or empty" && missing=1
+          [ -z "${{ secrets.SERVER_USER }}" ] && echo "::error::SERVER_USER secret is missing or empty" && missing=1
+          [ -z "${{ secrets.SERVER_PASS }}" ] && echo "::error::SERVER_PASS secret is missing or empty" && missing=1
+          [ -z "${{ secrets.GH_PAT }}" ] && echo "::error::GH_PAT secret is missing or empty" && missing=1
+          if [ "$missing" -eq 1 ]; then
+            echo "Add the missing secret(s) under Settings > Secrets and variables > Actions > Secrets tab."
+            echo "If they already exist there but this still fails, they may be under Settings > Environments instead — add 'environment: <name>' to this job."
+            exit 1
+          fi
+          echo "All required secrets are present."
+
       - name: Deploy to server via SSH
+        env:
+          # Forwarded into the remote script's environment via `envs:` below.
+          # Without this, $SERVER_PASS is empty on the remote side and every
+          # sudo -S call gets a blank password.
+          SERVER_PASS: ${{ secrets.SERVER_PASS }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASS }}
           port: 22
+          envs: SERVER_PASS
           script: |
             set -e
+
+            # PREFERRED FIX (do this once, then every "run_sudo" below can
+            # just become "sudo"): ssh in and run
+            #   sudo usermod -aG docker $USER
+            # then log out/in so group membership takes effect. Until then,
+            # this helper re-authenticates sudo on EVERY call instead of
+            # relying on sudo's cached timestamp — that cache can expire
+            # (often under 5 min) while `docker pull` is still downloading
+            # layers, leaving later commands (like image prune) with no
+            # valid credential and no TTY to prompt for one.
+            run_sudo() {
+              echo "$SERVER_PASS" | sudo -S "$@"
+            }
+            run_sudo -v
 
             # ── Normalise image name (GHCR requires lowercase) ──────────────
             IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
             # ── Authenticate and pull latest image ──────────────────────────
-            echo "${{ secrets.GH_PAT }}" | sudo docker login ghcr.io \
+            echo "${{ secrets.GH_PAT }}" | run_sudo docker login ghcr.io \
               -u "${{ github.actor }}" \
               --password-stdin
 
-            sudo docker pull ${IMAGE}:latest
+            run_sudo docker pull ${IMAGE}:latest
 
             # ── Stop and remove the old container (ignore errors if absent) ─
-            sudo docker stop novex-app || true
-            sudo docker rm   novex-app || true
+            run_sudo docker stop novex-app || true
+            run_sudo docker rm   novex-app || true
 
             # ── Create required host directories ────────────────────────────
-            sudo mkdir -p /opt/digitaltwin_images
+            run_sudo mkdir -p /opt/digitaltwin_images
 
             # ── Launch container ─────────────────────────────────────────────
             # --network host is REQUIRED: the .alg_env connection strings use
             # "localhost" to reach PostgreSQL, Redis, and other services that
-            # run directly on this server. Without host networking those
-            # connections fail and the FastAPI process crashes immediately.
-            #
-            # With host networking the container shares the host network stack,
-            # so "localhost" inside the container == the server's localhost.
-            # Ports 5378 (nginx) and 8002 (FastAPI) are bound on the host
-            # directly — no -p mappings needed or allowed in host mode.
-            sudo docker run -d \
+            # run directly on this server. With host networking the container
+            # shares the host network stack, so "localhost" inside the
+            # container == the server's localhost. Ports 5378 (nginx) and
+            # 8002 (FastAPI) are bound on the host directly — no -p mappings
+            # needed or allowed in host mode.
+            run_sudo docker run -d \
               --name novex-app \
               --restart unless-stopped \
               --network host \
@@ -121,11 +163,11 @@ jobs:
               if [ "$i" -eq 18 ]; then
                 echo "❌ Frontend did not start within 90 s."
                 echo "--- nginx config inside container ---"
-                sudo docker exec novex-app nginx -t || true
+                run_sudo docker exec novex-app nginx -t || true
                 echo "--- API process logs ---"
-                sudo docker exec novex-app cat /var/log/api.log 2>/dev/null | tail -50 || true
+                run_sudo docker exec novex-app cat /var/log/api.log 2>/dev/null | tail -50 || true
                 echo "--- Full container logs ---"
-                sudo docker logs --tail 100 novex-app
+                run_sudo docker logs --tail 100 novex-app
                 exit 1
               fi
             done
@@ -135,7 +177,7 @@ jobs:
             echo "http://localhost:5378/docs  → HTTP ${DOCS_5378}"
             if [ "${DOCS_5378}" = "000" ]; then
               echo "❌ /docs unreachable on port 5378"
-              sudo docker logs --tail 50 novex-app
+              run_sudo docker logs --tail 50 novex-app
               exit 1
             fi
 
@@ -144,8 +186,8 @@ jobs:
             echo "http://localhost:8002/docs  → HTTP ${DOCS_8002}"
             if [ "${DOCS_8002}" = "000" ]; then
               echo "❌ FastAPI not reachable on port 8002"
-              sudo docker exec novex-app cat /var/log/api.log 2>/dev/null | tail -50 || true
-              sudo docker logs --tail 50 novex-app
+              run_sudo docker exec novex-app cat /var/log/api.log 2>/dev/null | tail -50 || true
+              run_sudo docker logs --tail 50 novex-app
               exit 1
             fi
 
@@ -158,4 +200,4 @@ jobs:
             echo "════════════════════════════════════════════════════"
 
             # ── Prune dangling images to reclaim disk space ──────────────────
-            sudo docker image prune -f
+            run_sudo docker image prune -f

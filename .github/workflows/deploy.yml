@@ -1,401 +1,107 @@
-name: Build and Deploy NOVEX
-
+name: Build and Deploy Application
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
-  workflow_dispatch:
-
+    branches:
+      - main
 env:
-  NODE_VERSION: '20'
   REGISTRY: ghcr.io
-  # Hardcode lowercase — Docker rejects uppercase in image names. Replace
-  # with your actual lowercase repo path if it differs.
-  IMAGE_NAME: vatsav466/novex
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
+  IMAGE_NAME: ${{ github.repository }}
 jobs:
-  # ---------------------------------------------------------
-  # 1. LINT + UNIT TESTS
-  # ---------------------------------------------------------
-  lint-and-test:
-    name: Lint & Unit Tests
+  build-and-push:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Auto-remove unused imports
-        continue-on-error: true
-        run: |
-          if [ -f ".eslintrc.cjs" ]; then
-            CONFIG=".eslintrc.cjs"
-          elif [ -f "eslintrc.cjs" ]; then
-            CONFIG="eslintrc.cjs"
-          else
-            echo "No eslintrc.cjs found — skipping auto-fix (not fatal)."
-            exit 0
-          fi
-          npm install --no-save eslint-plugin-unused-imports
-          npx eslint . --ext ts,tsx --config "$CONFIG" --fix \
-            --plugin unused-imports \
-            --rule '{"@typescript-eslint/no-unused-vars": "off", "unused-imports/no-unused-imports": "error"}' \
-            || true
-
-      - name: Run ESLint with auto-fix
-        id: eslint
-        continue-on-error: true
-        run: |
-          if [ -f ".eslintrc.cjs" ]; then
-            CONFIG=".eslintrc.cjs"
-          elif [ -f "eslintrc.cjs" ]; then
-            CONFIG="eslintrc.cjs"
-          else
-            echo "No eslintrc.cjs found — skipping lint (not fatal)."
-            exit 0
-          fi
-          npx eslint . --ext ts,tsx --config "$CONFIG" --fix --report-unused-disable-directives --max-warnings 0
-
-      - name: Commit auto-fixed files
-        if: github.event_name == 'push'
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore: auto-fix ESLint issues [skip ci]"
-          file_pattern: '*.ts *.tsx'
-
-      - name: Report ESLint outcome
-        if: steps.eslint.outcome == 'failure'
-        run: |
-          echo "::warning::ESLint still reports errors after auto-fix — needs manual review."
-          echo "### ⚠️ ESLint found issues that could not be auto-fixed" >> $GITHUB_STEP_SUMMARY
-
-      - name: Run unit tests with coverage
-        run: npm run test -- --coverage || echo "No unit test script found, skipping"
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage/
-          retention-days: 7
-
-  # ---------------------------------------------------------
-  # 2. BUILD (frontend bundle sanity check — Docker does its own
-  #    build separately in the image; this just catches JS build
-  #    errors early, before spending time on a Docker build)
-  # ---------------------------------------------------------
-  build:
-    name: Build App
-    needs: lint-and-test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Cache Vite build cache
-        uses: actions/cache@v4
-        with:
-          path: node_modules/.vite
-          key: ${{ runner.os }}-vite-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-vite-
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build production bundle
-        run: npm run build
-
-      - name: Report bundle size
-        run: |
-          echo "### Build Output Size" >> $GITHUB_STEP_SUMMARY
-          du -sh dist/* >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
-          retention-days: 7
-
-  # ---------------------------------------------------------
-  # 3. E2E + VISUAL REGRESSION TESTING (Playwright)
-  # ---------------------------------------------------------
-  e2e-and-visual-tests:
-    name: E2E & Visual Regression (Playwright)
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Download build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps
-
-      - name: Serve built app
-        run: |
-          npx serve -s dist -l 4173 &
-          npx wait-on http://localhost:4173
-
-      - name: Run Playwright E2E tests
-        env:
-          BASE_URL: http://localhost:4173
-        run: |
-          TEST_COUNT=$(npx playwright test --list 2>/dev/null | grep -c "›" || true)
-          if [ "$TEST_COUNT" -eq 0 ]; then
-            echo "::warning::No Playwright E2E tests found yet — skipping."
-          else
-            npx playwright test
-          fi
-
-      - name: Run visual regression tests
-        run: |
-          VISUAL_COUNT=$(npx playwright test --grep @visual --list 2>/dev/null | grep -c "›" || true)
-          if [ "$VISUAL_COUNT" -eq 0 ]; then
-            echo "::warning::No visual regression tests (@visual tag) found yet — skipping."
-          else
-            npx playwright test --grep @visual
-          fi
-
-      - name: Upload Playwright report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: playwright-report/
-          retention-days: 14
-
-      - name: Upload visual diff snapshots
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: visual-regression-diffs
-          path: test-results/
-          retention-days: 14
-
-  # ---------------------------------------------------------
-  # 4. DOCKER BUILD & PUSH TO GHCR
-  # ---------------------------------------------------------
-  docker-build-and-push:
-    name: Build & Push Docker Image
-    needs: e2e-and-visual-tests
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
+      - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
-          # Classic PAT with write:packages/read:packages, NOT the default
-          # GITHUB_TOKEN — GITHUB_TOKEN's package-write access depends on
-          # Settings > Actions > General > Workflow permissions, and a PAT
-          # sidesteps that setting entirely.
           password: ${{ secrets.GH_PAT }}
-
-      - name: Extract Docker metadata
+      - name: Docker Metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ghcr.io/${{ github.repository }}
           tags: |
-            type=sha,prefix=,format=short
             type=raw,value=latest
-
-      - name: Build and push image
+            type=sha,format=short
+      - name: Build and Push
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  # ---------------------------------------------------------
-  # 5. DEPLOY
-  # ---------------------------------------------------------
   deploy:
-    name: Deploy
-    needs: docker-build-and-push
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
-      - name: Verify required secrets are set
-        run: |
-          missing=0
-          [ -z "${{ secrets.SERVER_HOST }}" ] && echo "::error::SERVER_HOST secret is missing or empty" && missing=1
-          [ -z "${{ secrets.SERVER_USER }}" ] && echo "::error::SERVER_USER secret is missing or empty" && missing=1
-          [ -z "${{ secrets.SERVER_PASS }}" ] && echo "::error::SERVER_PASS secret is missing or empty" && missing=1
-          [ -z "${{ secrets.GH_PAT }}" ] && echo "::error::GH_PAT secret is missing or empty" && missing=1
-          if [ "$missing" -eq 1 ]; then
-            echo "Add the missing secret(s) under Settings > Secrets and variables > Actions > Secrets tab."
-            echo "If they exist there but this still fails, they may be under Settings > Environments instead — add 'environment: <name>' to this job."
-            exit 1
-          fi
-          echo "All required secrets are present."
-
-      - name: Validate GH_PAT has package scopes
-        run: |
-          SCOPES=$(curl -sI -H "Authorization: token ${{ secrets.GH_PAT }}" https://api.github.com/user | grep -i '^x-oauth-scopes:' || true)
-          echo "Token scopes: ${SCOPES:-<none found — token invalid, expired, or fine-grained>}"
-          if ! echo "$SCOPES" | grep -q "write:packages"; then
-            echo "::error::GH_PAT is missing write:packages scope (or is invalid/expired/fine-grained)."
-            echo "::error::Regenerate a CLASSIC PAT with write:packages + read:packages scopes and update the GH_PAT secret."
-            exit 1
-          fi
-          echo "✅ GH_PAT has required package scopes."
-
-      - name: Deploy to server via SSH
-        env:
-          SERVER_PASS: ${{ secrets.SERVER_PASS }}
+      - name: Deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASS }}
           port: 22
-          envs: SERVER_PASS
           script: |
             set -e
-
-            # PREFERRED FIX (do once, then replace every run_sudo below with
-            # plain sudo): ssh in and run `sudo usermod -aG docker $USER`,
-            # then log out/in. Until then this re-authenticates sudo on
-            # EVERY call instead of relying on sudo's cached timestamp —
-            # that cache can expire mid-script (e.g. during a slow
-            # docker pull), leaving later commands with no credential.
-            run_sudo() {
-              echo "$SERVER_PASS" | sudo -S "$@"
-            }
-            run_sudo -v
-
-            IMAGE=$(echo "ghcr.io/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
-
-            if ! echo "${{ secrets.GH_PAT }}" | run_sudo docker login ghcr.io \
+            IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+            echo "${{ secrets.GH_PAT }}" | sudo docker login ghcr.io \
               -u "${{ github.actor }}" \
-              --password-stdin; then
-              echo "❌ GHCR login failed on the server (denied: denied)."
-              echo "   GH_PAT is invalid/expired/lacks scope — this is NOT an app or nginx issue."
-              exit 1
-            fi
-
-            run_sudo docker pull ${IMAGE}:latest
-
-            run_sudo docker stop novex-app || true
-            run_sudo docker rm   novex-app || true
-
-            run_sudo mkdir -p /opt/digitaltwin_images
-
-            # --network host is REQUIRED: .alg_env connection strings use
-            # "localhost" to reach PostgreSQL/Redis running directly on this
-            # server. With host networking, "localhost" inside the container
-            # == the server's localhost. Ports 5378 (nginx) and 8002
-            # (FastAPI) are bound on the host directly — no -p mappings
-            # needed or allowed together with --network host.
-            run_sudo docker run -d \
-              --name novex-app \
+              --password-stdin
+            sudo docker pull ${IMAGE}:latest
+            sudo docker stop app-container || true
+            sudo docker rm app-container || true
+            sudo mkdir -p /opt/digitaltwin_images
+            sudo docker run -d \
+              --name app-container \
               --restart unless-stopped \
-              --network host \
+              -p 5378:5378 \
               -v /opt/digitaltwin_images:/opt/digitaltwin_images \
               ${IMAGE}:latest
 
-            echo "Waiting for application to start..."
-            for i in $(seq 1 18); do
+            echo "Waiting for application..."
+            for i in $(seq 1 15); do
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5378/ || echo "000")
               if [ "$STATUS" = "200" ]; then
-                echo "✅ Frontend is up (HTTP $STATUS)"
+                echo "Frontend is up (HTTP $STATUS)"
                 break
               fi
-              echo "   Not ready yet (HTTP $STATUS) — attempt $i/18..."
+              echo "Not ready yet (HTTP $STATUS), retrying ($i/15)..."
               sleep 5
-              if [ "$i" -eq 18 ]; then
-                echo "❌ Frontend did not start within 90 s."
+              if [ "$i" -eq 15 ]; then
+                echo "Frontend failed to start (last HTTP status: $STATUS)."
+                echo "--- Checking if frontend files exist in container ---"
+                sudo docker exec app-container ls -la /app/frontend/dist || echo "Path /app/frontend/dist not found in container"
                 echo "--- nginx config test ---"
-                run_sudo docker exec novex-app nginx -t || true
-                echo "--- API process logs ---"
-                run_sudo docker exec novex-app cat /var/log/api.log 2>/dev/null | tail -50 || true
+                sudo docker exec app-container nginx -t || true
                 echo "--- Full container logs ---"
-                run_sudo docker logs --tail 100 novex-app
+                sudo docker logs app-container
                 exit 1
               fi
             done
 
-            DOCS_5378=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5378/docs || echo "000")
-            echo "http://localhost:5378/docs  → HTTP ${DOCS_5378}"
-            if [ "${DOCS_5378}" = "000" ]; then
-              echo "❌ /docs unreachable on port 5378"
-              run_sudo docker logs --tail 50 novex-app
+            echo "Checking Swagger..."
+            DOCS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5378/docs || echo "000")
+            if [ "$DOCS_STATUS" = "000" ]; then
+              echo "Swagger endpoint unreachable (connection failed)."
+              sudo docker logs app-container
               exit 1
+            else
+              echo "Swagger endpoint reachable (HTTP $DOCS_STATUS)"
             fi
 
-            DOCS_8002=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8002/docs || echo "000")
-            echo "http://localhost:8002/docs  → HTTP ${DOCS_8002}"
-            if [ "${DOCS_8002}" = "000" ]; then
-              echo "❌ FastAPI not reachable on port 8002"
-              run_sudo docker exec novex-app cat /var/log/api.log 2>/dev/null | tail -50 || true
-              run_sudo docker logs --tail 50 novex-app
-              exit 1
-            fi
-
-            echo ""
-            echo "════════════════════════════════════════════════════"
-            echo "✅  Deploy complete"
-            echo "   Dashboard : http://${{ secrets.SERVER_HOST }}:5378/"
-            echo "   Swagger   : http://${{ secrets.SERVER_HOST }}:5378/docs"
-            echo "   FastAPI   : http://${{ secrets.SERVER_HOST }}:8002/docs"
-            echo "════════════════════════════════════════════════════"
-
-            run_sudo docker image prune -f
+            sudo docker image prune -f

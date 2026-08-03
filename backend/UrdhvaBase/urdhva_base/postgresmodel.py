@@ -665,7 +665,12 @@ class BasePostgresModel(pydantic.BaseModel):
         json_encoders = {
         }
         from_attributes = True
-        collection_name: urdhva_base.settings.default_index
+        # BUG-FIX: was `collection_name: urdhva_base.settings.default_index` — a bare
+        # type annotation that evaluated settings.default_index at class definition time.
+        # settings.default_index never existed, so every import raised:
+        #   AttributeError: 'Settings' object has no attribute 'default_index'
+        # Fixed to a proper string field with a safe empty default.
+        collection_name: str = ""
         schema_class: Base
         search_fields: []
         upsert_keys: []

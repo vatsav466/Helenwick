@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     # ── Application ──────────────────────────────────────────────────────────
     app_name: str = "NOVEX"
+    environment: str = "prod"
 
     # ── Database connections ──────────────────────────────────────────────────
     # Dict mapping connection-type label → list of DSN strings.
@@ -60,17 +61,28 @@ class Settings(BaseSettings):
 
     # ── Payload encryption ────────────────────────────────────────────────────
     enable_encrypted_payload: bool = False
+    disable_api_extra_inputs: bool = False
 
     # ── LDAP / Active Directory ───────────────────────────────────────────────
     ldap_host: str = "localhost"
     ldap_port: int = 389
     ldap_domain: str = "example.com"
     ldap_auth_enabled: bool = False
+    # OpenLDAP token-based auth (used by some action files)
+    openldap_auth_url: str = ""
+    openldap_token_url: str = ""
+    openldap_client_username: str = ""
+    openldap_client_password: str = ""
 
     # ── JWT (mobile / app auth) ───────────────────────────────────────────────
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
-    jwt_expiry_minutes: int = 1440  # 24 hours
+    jwt_expiry_minutes: int = 1440          # 24 hours (used by urdhva_base internals)
+    jwt_expiration_hours: int = 24          # alias used by users_actions.py login handler
+
+    # ── Password / account security ───────────────────────────────────────────
+    max_password_retires: int = 5           # note: original typo preserved for compatibility
+    lockout_time: int = 300                 # seconds
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     max_redis_connections: int = 20
@@ -98,6 +110,45 @@ class Settings(BaseSettings):
 
     # ── Master data in-memory cache ───────────────────────────────────────────
     default_masters_cache_seconds: int = 300   # 5 minutes
+
+    # ── HTTP proxy (used by SAML/Azure AD MSAL client at MODULE LOAD time) ────
+    # CRITICAL: accessed at module level in authenticator/saml_validation.py.
+    # Missing defaults crash the import chain and kill the login route (404).
+    http_proxy: str = ""
+    https_proxy: str = ""
+
+    # ── SAML / Azure AD OAuth2 ────────────────────────────────────────────────
+    saml_tenant_id: str = ""
+    saml_client_id: str = ""
+    saml_client_secret: str = ""
+    saml_redirect_uri: str = ""
+
+    # ── Keycloak ──────────────────────────────────────────────────────────────
+    keycloak_internal_url: str = "http://localhost:8080"
+    keycloak_external_url: str = "http://localhost:8080"
+    keycloak_auth_default: str = "/auth/"
+    keycloak_admin: str = "admin"
+    keycloak_password: str = "admin"
+
+    # ── Roles / permissions ───────────────────────────────────────────────────
+    roles_directories: str = ""
+
+    # ── Camunda BPMN engine ───────────────────────────────────────────────────
+    camunda_url: str = "http://localhost:8082"
+
+    # ── File storage / upload paths ───────────────────────────────────────────
+    uploads: str = "/var/log/ceg_sys_logs/uploads"
+    download_path: str = "/var/log/ceg_sys_logs/downloads"
+    downloads: str = "/var/log/ceg_sys_logs/downloads"
+    downloads_url_base: str = "/downloads"
+    ui_path: str = "/usr/share/nginx/html"
+
+    # ── Device commissioning endpoints ────────────────────────────────────────
+    commisioning_url: str = ""      # note: original typo preserved for compatibility
+    decommisioning_url: str = ""    # note: original typo preserved for compatibility
+
+    # ── Server metadata ───────────────────────────────────────────────────────
+    server_ip: str = "localhost"
 
     # ── Misc ──────────────────────────────────────────────────────────────────
     debug: bool = False

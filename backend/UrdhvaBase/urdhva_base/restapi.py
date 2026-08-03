@@ -185,7 +185,7 @@ def _load_routers(app: FastAPI):
         except Exception as exc:
             errors += 1
             logger.warning(f"  ✗ failed to load {filename}: {exc}")
-            if os.environ.get("MODE") == "dev":
+            if True:  # always log tracebacks for router load failures
                 traceback.print_exc()
 
     logger.info(f"Router discovery: {loaded} loaded, {errors} skipped")

@@ -19,10 +19,11 @@ ENV/
 env/
 
 # ── Secret / credential files ─────────────────────────────────────────────────
-# NOTE: backend/api_manager/.alg_env IS committed intentionally (it's the
-# deployment config and contains no production credentials that differ per env).
-# If you have per-environment overrides, put them in:
-#   backend/api_manager/.alg_env.production  (gitignored below)
+# backend/api_manager/.alg_env contains live DB/SMTP/ThingsBoard credentials
+# and an encryption key. It must NEVER be committed. Provide it at deploy
+# time only (runtime volume mount from a secrets store / CI secret).
+backend/api_manager/.alg_env
+**/.alg_env
 *.alg_env.production
 *.alg_env.local
 .db_creds_env

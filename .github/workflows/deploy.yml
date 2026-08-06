@@ -30,7 +30,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GH_PAT }}
+          password: ${{ secrets.GHCR_PAT }}
 
       - name: Docker Metadata
         id: meta
@@ -58,16 +58,19 @@ jobs:
     steps:
       - name: Deploy
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          ALG_ENV_CONTENTS: ${{ secrets.ALG_ENV_CONTENTS }}
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          password: ${{ secrets.SERVER_PASS }}
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
           port: 22
+          envs: ALG_ENV_CONTENTS
           script: |
             set -e
             IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
-            echo "${{ secrets.GH_PAT }}" | sudo docker login ghcr.io \
+            echo "${{ secrets.GHCR_PAT }}" | sudo docker login ghcr.io \
               -u "${{ github.actor }}" \
               --password-stdin
 
@@ -75,17 +78,27 @@ jobs:
             sudo docker stop app-container || true
             sudo docker rm app-container || true
             sudo mkdir -p /opt/digitaltwin_images
+            sudo mkdir -p /opt/novex/secrets
 
-            # --network host is required: the api process connects to Redis
-            # at localhost:6379, which is the HOST's Redis. Without
-            # --network host, "localhost" inside the container has no
-            # Redis listening on it and the api process fails to start
-            # (this was the actual cause of the repeated "exit status 1"
-            # crash loop and the resulting HTTP 500s from nginx).
+            # .alg_env is never baked into the image or committed to git.
+            # It's delivered here from the ALG_ENV_CONTENTS GitHub secret and
+            # mounted read-only, matching how docker-compose.yml does it locally.
+            echo "${ALG_ENV_CONTENTS}" | sudo tee /opt/novex/secrets/.alg_env > /dev/null
+            sudo chmod 600 /opt/novex/secrets/.alg_env
+
+            # Standard bridge networking with explicit port publishing —
+            # matches docker-compose.yml exactly. --network host is NOT
+            # required: Redis runs inside the container (see supervisord.conf,
+            # which self-starts its own instance if none is already up), and
+            # the api process listens on 0.0.0.0:8002 so it's reachable
+            # through the published port either way.
             sudo docker run -d \
               --name app-container \
               --restart unless-stopped \
-              --network host \
+              -p 5378:5378 \
+              -p 8002:8002 \
+              -e MODE=prod \
+              -v /opt/novex/secrets/.alg_env:/opt/ceg/algo/api_manager/.alg_env:ro \
               -v /opt/digitaltwin_images:/opt/digitaltwin_images \
               ${IMAGE}:latest
 
@@ -129,5 +142,15 @@ jobs:
             echo "Checking API proxy..."
             API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5378/api/ || echo "000")
             echo "API endpoint responded with HTTP $API_STATUS"
+
+            echo "Checking direct :8002 access..."
+            DIRECT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8002/docs || echo "000")
+            if [ "$DIRECT_STATUS" != "200" ]; then
+              echo "Direct :8002 access failed (HTTP $DIRECT_STATUS)."
+              sudo docker exec app-container tail -n 100 /var/log/api.log || true
+              exit 1
+            else
+              echo "Direct :8002 access OK (HTTP $DIRECT_STATUS)"
+            fi
 
             sudo docker image prune -f
